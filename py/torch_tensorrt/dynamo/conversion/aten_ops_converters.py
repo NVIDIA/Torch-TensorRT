@@ -2550,15 +2550,7 @@ def aten_ops_cdist_forward(
 
 
 def avg_pool_param_validator(pool_node: Node) -> bool:
-    ceil_mode = args_bounds_check(pool_node.args, 4, False)
     divisor_override = args_bounds_check(pool_node.args, 6)
-
-    if ceil_mode is not False:
-        _LOGGER.debug(
-            f"Currently we don't support specifying ceil_mode, got ceil_mode={ceil_mode}."
-        )
-        return False
-
     if divisor_override is not None:
         _LOGGER.debug(
             f"Currently we don't support divisor_override, got divisor_override={divisor_override}."
@@ -2694,17 +2686,14 @@ def topk_sort_validator(k: int) -> bool:
 
 def max_pool_param_validator(pool_node: Node) -> bool:
     dilation = args_bounds_check(pool_node.args, 4, 1)
-    ceil_mode = args_bounds_check(pool_node.args, 5, False)
 
-    if dilation != 1:
-        _LOGGER.debug(f"Currently we don't support dilation, got dilation={dilation}.")
-        return False
+    if not isinstance(dilation, (list, tuple)):
+        dilation = (dilation,)
 
-    if ceil_mode is not False:
-        _LOGGER.debug(
-            f"Currently we don't support specifying ceil_mode, got ceil_mode={ceil_mode}."
-        )
-        return False
+    for dil in dilation:
+        if dil != 1:
+            _LOGGER.debug("Currently we don't support dilation > 1 at any dimension.")
+            return False
 
     return True
 
