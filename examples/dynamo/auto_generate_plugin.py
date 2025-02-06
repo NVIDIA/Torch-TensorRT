@@ -97,7 +97,7 @@ def _(x: torch.Tensor, y: torch.Tensor, b: float = 0.2, a: int = 2) -> torch.Ten
 
 
 # %%
-# Here we use automatic plugin creation feature in Torch-TensorRT which enables plugin registration using 
+# Here we use automatic plugin creation feature in Torch-TensorRT which enables plugin registration using
 # TensorRT QDP APIs
 torch_tensorrt.dynamo.conversion.plugins.generate_plugin("torchtrt_ex::elementwise_mul")
 
