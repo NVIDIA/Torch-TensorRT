@@ -1,3 +1,4 @@
+import logging
 from types import FunctionType
 from typing import Tuple
 
@@ -7,6 +8,8 @@ from sympy import lambdify
 from torch._dynamo.source import LocalSource
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx.experimental.symbolic_shapes import DimDynamic, ShapeEnv
+
+_LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
 def mksym(shape_env, value, source, dynamic_dim):
@@ -42,6 +45,16 @@ def generate_plugin(plugin_name: str):
         for arg in schema.arguments:
             arg_list.append(arg.name)
 
+            # TODO: Torch types need to be converted to python primitive types here
+            # Some other types are not handled:
+            # - torch._C.ListType.ofT(<type>)
+            # - torch._C.TupleType.get()
+            # - torch._C.DictType.get(<key_type>, <value_type>)
+            # - torch._C.OptionalType.ofT(<type>)
+            # - torch._C.DeviceObjType.get()
+            # - torch._C.FunctionType.get()
+            # - torch._C.ClassType
+
             if arg.type.isSubtypeOf(torch._C.TensorType.get()):
                 tensor_args.append(arg)
                 register_func_annotation[arg.name] = trtp.TensorDesc
@@ -52,6 +65,12 @@ def generate_plugin(plugin_name: str):
             elif arg.type.isSubtypeOf(torch._C.IntType.get()):
                 register_func_annotation[arg.name] = int
                 impl_func_annotation[arg.name] = int
+            elif arg.type.isSubtypeOf(torch._C.Booltype.get()):
+                register_func_annotation[arg.name] = bool
+                impl_func_annotation[arg.name] = bool
+            elif arg.type.isSubtypeOf(torch._C.Stringtype.get()):
+                register_func_annotation[arg.name] = str
+                impl_func_annotation[arg.name] = str
             else:
                 raise ValueError("arg type is not handled")
 
@@ -94,12 +113,6 @@ def generate_plugin(plugin_name: str):
         register_func_annotation,
         impl_func_annotation,
     ) = generate_signature(torch_op)
-    print(args_input)
-    print(kwargs_input)
-    print(plugin_signature)
-    print(plugin_impl_signature)
-    print(register_func_annotation)
-    print(impl_func_annotation)
 
     def _generic_plugin_desc(*args, **kwargs) -> Tuple[trtp.TensorDesc]:
         shape_env = ShapeEnv()
@@ -141,6 +154,8 @@ def generate_plugin(plugin_name: str):
     return _generic_plugin_desc({args_input}, {kwargs_input})
     """
 
+    _LOGGER.warning(f"Plugin registration function: \n{codegen_plugin}")
+
     plugin_code = compile(codegen_plugin, "<string>", "exec")
 
     globals()["_generic_plugin_desc"] = _generic_plugin_desc
@@ -167,6 +182,8 @@ def generate_plugin(plugin_name: str):
     _generic_plugin_impl(outputs, stream, {args_input}, {kwargs_input})
     """
 
+    _LOGGER.warning(f"Plugin implementation function: \n{plugin_impl_func}")
+
     plugin_impl_code = compile(plugin_impl_func, "<string>", "exec")
 
     globals()["_generic_plugin_impl"] = _generic_plugin_impl
@@ -174,15 +191,6 @@ def generate_plugin(plugin_name: str):
     plugin_impl = FunctionType(plugin_impl_code.co_consts[0], globals(), "plugin_impl")
 
     plugin_impl.__annotations__ = impl_func_annotation
-
-    import inspect
-
-    sig = inspect.signature(plugin_impl)
-
-    # input arg annotations are optional, but we will validate if provided
-    for name, param in sig.parameters.items():
-        print(name)
-        print(param.annotation)
 
     trtp.impl(plugin_name)(plugin_impl)
 

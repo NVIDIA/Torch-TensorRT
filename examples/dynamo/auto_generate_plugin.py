@@ -1,10 +1,10 @@
 """
 .. _auto_generate_converters:
 
-Automatically Generate a Converter for a Custom Kernel
+Automatically Generate a Plugin for a Custom Kernel
 ===================================================================
 
-We are going to demonstrate how to automatically generate a converter for a custom kernel using Torch-TensorRT using
+We are going to demonstrate how to automatically generate a plugin for a custom kernel using Torch-TensorRT using
 the new Python based plugin system in TensorRT 10.7.
 
 Torch-TensorRT supports falling back to PyTorch implementations of operations in the case that Torch-TensorRT
@@ -102,14 +102,19 @@ def _(x: torch.Tensor, y: torch.Tensor, b: float = 0.2, a: int = 2) -> torch.Ten
 torch_tensorrt.dynamo.conversion.plugins.generate_plugin("torchtrt_ex::elementwise_mul")
 
 
-# %%
-# Generating the Converter
-# -------------------------------------------------------------------
-# Given that we have defined the custom operator in PyTorch and TensorRT, we can now generate the converter for the operation.
-# As long as the namespace and names match, the following function will automatically generate the converter for the operation.
+# # %%
+# # Generating the Converter
+# # -------------------------------------------------------------------
+# # Given that we have defined the custom operator in PyTorch and TensorRT, we can now generate the converter for the operation.
+# # As long as the namespace and names match, the following function will automatically generate the converter for the operation.
 torch_tensorrt.dynamo.conversion.plugins.generate_plugin_converter(
     "torchtrt_ex::elementwise_mul", supports_dynamic_shapes=True
 )
+
+
+# # %%
+# # Above two commands can be replaced with the following single one line:
+# torch_tensorrt.dynamo.conversion.plugins.custom_op("torchtrt_ex::elementwise_mul", supports_dynamic_shapes=True)
 
 
 # %%
