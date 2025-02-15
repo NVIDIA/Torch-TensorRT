@@ -175,6 +175,7 @@ def run_ts_trt(model, input_tensors, params, precision, batch_size):
         "inputs": input_tensors,
         "enabled_precisions": {precision_to_dtype(precision)},
         "truncate_long_and_double": params.get("truncate", False),
+        "use_python_runtime": params.get("use_python_runtime", False),
     }
 
     if precision == "int8":
@@ -217,6 +218,7 @@ def run_hf_dynamo(model, input_tensors, params, precision, batch_size):
         inputs=input_tensors,
         enabled_precisions={precision_to_dtype(precision)},
         truncate_double=params.get("truncate", False),
+        use_python_runtime=params.get("use_python_runtime", False),
     )
     end_compile = timeit.default_timer()
     compile_time_s = end_compile - start_compile
@@ -262,6 +264,7 @@ def run_dynamo(model, input_tensors, params, precision, batch_size):
         ),
         cache_built_engines=params.get("cache_built_engines", False),
         reuse_cached_engines=params.get("reuse_cached_engines", False),
+        use_python_runtime=params.get("use_python_runtime", False),
     )
     end_compile = timeit.default_timer()
     compile_time_s = end_compile - start_compile
@@ -292,6 +295,7 @@ def run_torch_compile(model, input_tensors, params, precision, batch_size):
         "enabled_precisions": {precision_to_dtype(precision)},
         "truncate": params.get("truncate", False),
         "min_block_size": params.get("min_block_size", 1),
+        "use_python_runtime": params.get("use_python_runtime", False),
     }
     start_compile = timeit.default_timer()
     model = torch.compile(model, backend="tensorrt", dynamic=None, options=compile_spec)
@@ -303,6 +307,45 @@ def run_torch_compile(model, input_tensors, params, precision, batch_size):
     record_perf(
         model,
         "torch_compile",
+        input_tensors,
+        precision,
+        iters,
+        batch_size,
+        compile_time_s,
+    )
+
+
+@run_with_try_except
+def run_export_compile(model, input_tensors, params, precision, batch_size):
+    """
+    Export the given model using torch.export and compile the exported program using torchtrt.dynamo.compile and record performance stats
+    """
+    # Move the model to GPU
+    model = model.to("cuda:0")
+    torch._dynamo.reset()
+
+    print(
+        "Running Torch-TensorRT [export_compile] for precision: ",
+        precision,
+        " batch_size : ",
+        batch_size,
+    )
+    start_compile = timeit.default_timer()
+    exp_program = torch.export.export(model, args=tuple(input_tensors))
+    model = torchtrt.dynamo.compile(
+        exp_program,
+        inputs=tuple(input_tensors),
+        enabled_precisions={precision_to_dtype(precision)},
+        truncate_double=params.get("truncate", False),
+        use_python_runtime=params.get("use_python_runtime", False),
+    )
+    end_compile = timeit.default_timer()
+    compile_time_s = end_compile - start_compile
+    iters = params.get("iterations", 20)
+
+    record_perf(
+        model,
+        "export_compile",
         input_tensors,
         precision,
         iters,
@@ -520,6 +563,11 @@ def run(
         elif backend == "torch_compile":
             run_torch_compile(model_torch, input_tensors, params, precision, batch_size)
 
+        elif backend == "export_compile":
+            run_export_compile(
+                model_torch, input_tensors, params, precision, batch_size
+            )
+
         elif backend == "inductor":
             run_inductor(model_torch, input_tensors, params, precision, batch_size)
 
@@ -532,7 +580,7 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--backends",
         type=str,
-        help="Comma separated string of backends. Eg: torch, ts_trt, dynamo, torch_compile, inductor, tensorrt",
+        help="Comma separated string of backends. Eg: torch, ts_trt, dynamo, torch_compile, export_compile, inductor, tensorrt",
     )
     arg_parser.add_argument(
         "--model", type=str, default="", help="Name of torchscript model file"
@@ -586,6 +634,16 @@ if __name__ == "__main__":
         "--is_trt_engine",
         action="store_true",
         help="Boolean flag to determine if the user provided model is a TRT engine or not",
+    )
+    arg_parser.add_argument(
+        "--use_python_runtime",
+        action="store_true",
+        help="Whether to use Python runtime or not. Using C++ runtime by default",
+    )
+    arg_parser.add_argument(
+        "--enable_cuda_graph",
+        action="store_true",
+        help="Whether to enable CUDA Graph. It is not used by default",
     )
     arg_parser.add_argument(
         "--report",
@@ -648,10 +706,16 @@ if __name__ == "__main__":
         )
 
     backends = parse_backends(params["backends"])
-    if ("dynamo" in backends or "torch_compile" in backends) and (model_torch is None):
+    if (
+        "dynamo" in backends
+        or "torch_compile" in backends
+        or "export_compile" in backends
+    ) and (model_torch is None):
         raise ValueError(
             "No Pytorch model (nn.Module) is provided for torchdynamo compilation. Please provide a pytorch model using --model_torch argument"
         )
+
+    torchtrt.runtime.set_cudagraphs_mode(params.get("enable_cuda_graph", False))
 
     batch_size = params["batch_size"]
     is_trt_engine = params["is_trt_engine"]
