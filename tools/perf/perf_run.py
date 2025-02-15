@@ -316,6 +316,45 @@ def run_torch_compile(model, input_tensors, params, precision, batch_size):
 
 
 @run_with_try_except
+def run_export_compile(model, input_tensors, params, precision, batch_size):
+    """
+    Export the given model using torch.export and compile the exported program using torchtrt.dynamo.compile and record performance stats
+    """
+    # Move the model to GPU
+    model = model.to("cuda:0")
+    torch._dynamo.reset()
+
+    print(
+        "Running Torch-TensorRT [export_compile] for precision: ",
+        precision,
+        " batch_size : ",
+        batch_size,
+    )
+    start_compile = timeit.default_timer()
+    exp_program = torch.export.export(model, args=tuple(input_tensors))
+    model = torchtrt.dynamo.compile(
+        exp_program,
+        inputs=tuple(input_tensors),
+        enabled_precisions={precision_to_dtype(precision)},
+        truncate_double=params.get("truncate", False),
+        use_python_runtime=params.get("use_python_runtime", False),
+    )
+    end_compile = timeit.default_timer()
+    compile_time_s = end_compile - start_compile
+    iters = params.get("iterations", 20)
+
+    record_perf(
+        model,
+        "export_compile",
+        input_tensors,
+        precision,
+        iters,
+        batch_size,
+        compile_time_s,
+    )
+
+
+@run_with_try_except
 def run_hf_inductor(model, input_tensors, params, precision, batch_size):
     """
     Compile the huggingface model using torch inductor and record performance stats
@@ -524,6 +563,11 @@ def run(
         elif backend == "torch_compile":
             run_torch_compile(model_torch, input_tensors, params, precision, batch_size)
 
+        elif backend == "export_compile":
+            run_export_compile(
+                model_torch, input_tensors, params, precision, batch_size
+            )
+
         elif backend == "inductor":
             run_inductor(model_torch, input_tensors, params, precision, batch_size)
 
@@ -536,7 +580,7 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--backends",
         type=str,
-        help="Comma separated string of backends. Eg: torch, ts_trt, dynamo, torch_compile, inductor, tensorrt",
+        help="Comma separated string of backends. Eg: torch, ts_trt, dynamo, torch_compile, export_compile, inductor, tensorrt",
     )
     arg_parser.add_argument(
         "--model", type=str, default="", help="Name of torchscript model file"
@@ -662,7 +706,11 @@ if __name__ == "__main__":
         )
 
     backends = parse_backends(params["backends"])
-    if ("dynamo" in backends or "torch_compile" in backends) and (model_torch is None):
+    if (
+        "dynamo" in backends
+        or "torch_compile" in backends
+        or "export_compile" in backends
+    ) and (model_torch is None):
         raise ValueError(
             "No Pytorch model (nn.Module) is provided for torchdynamo compilation. Please provide a pytorch model using --model_torch argument"
         )
